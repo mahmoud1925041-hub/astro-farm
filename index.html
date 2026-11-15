@@ -278,7 +278,7 @@
         <div class="stats-grid">
             <div class="stat-card">
                 <div style="font-size:24px;">💧</div>
-                <small>Soil Moisture (NASA SMAP)</small>
+                <small>Soil Moisture (NASA POWER)</small>
                 <strong id="statMoisture">Awaiting Satellite Lock</strong>
                 <p id="statMoistureSub">Scan a farm location on the radar above.</p>
             </div>
@@ -307,11 +307,11 @@
                     <div>
                         <label class="field-label">Target Crop</label>
                         <div class="combo">
-                            <input type="text" id="cropSearch" class="dash-input" value="Wheat" placeholder="Search crops..." autocomplete="off">
+                            <input type="text" id="cropSearch" class="dash-input" value="" placeholder="Search crops..." autocomplete="off">
                             <button type="button" class="combo-toggle" onclick="toggleCropList()" aria-label="Show all crops">▾</button>
                             <div id="cropList" class="dropdown-list hidden"></div>
                         </div>
-                        <input type="hidden" id="cropSelect" value="Wheat">
+                        <input type="hidden" id="cropSelect" value="">
                     </div>
                     <div>
                         <label class="field-label">Harvest Quantity</label>
@@ -326,7 +326,7 @@
                 <button class="btn-scan" onclick="publishCropListing()">Publish Crop to Investor Marketplace</button>
 
                 <div id="cropNotice" class="notice">
-                    Selected crop: <b>Wheat</b>. Scan your land on the satellite map above to lock sector coordinates.
+                    No crop selected yet. Scan your land on the satellite map above to lock sector coordinates.
                 </div>
             </section>
         </div>
@@ -405,18 +405,48 @@
     </main>
 
     <script>
-        let currentUser = localStorage.getItem('cybergalaxy_user');
-        if (!currentUser) {
-            window.location.href = '/';
-        }
+        // The server only opens this page for signed-in accounts; the name is confirmed via /api/me below
+        let currentUser = localStorage.getItem('cybergalaxy_user') || '';
 
         let currentRole = 'farmer';
         let lockedLocation = null;
+        let chatHistory = [];
 
         document.getElementById('displayUser').innerText = currentUser;
 
-        function logoutSystem() {
+        function escapeHtml(str) {
+            return String(str ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+
+        // All server calls go through here; an expired session sends you back to login
+        async function api(url, body) {
+            const opts = body === undefined ? {} : {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+            };
+            const res = await fetch(url, opts);
+            if (res.status === 401) {
+                localStorage.removeItem('cybergalaxy_user');
+                window.location.href = '/';
+                throw new Error('Session expired');
+            }
+            let data = {};
+            try { data = await res.json(); } catch (e) {}
+            if (!res.ok) throw new Error(data.message || 'Server error');
+            return data;
+        }
+
+        // Confirm the real server session and show the account name
+        api('/api/me').then(d => {
+            if (d.name) {
+                currentUser = d.name;
+                localStorage.setItem('cybergalaxy_user', d.name);
+                document.getElementById('displayUser').innerText = d.name;
+            }
+        }).catch(() => {});
+
+        async function logoutSystem() {
             localStorage.removeItem('cybergalaxy_user');
+            try { await fetch('/logout', { method: 'POST' }); } catch (e) {}
             window.location.href = '/';
         }
 
@@ -429,31 +459,48 @@
         }
         switchRole(currentRole);
 
-        let listings = [
-            { icon: "🌾", name: "Wheat", area: "Tanta, Egypt", qty: "12 tons", phone: "Verified Coop" },
-            { icon: "🍅", name: "Tomatoes", area: "Banha, Egypt", qty: "4 tons", phone: "Verified Coop" },
-            { icon: "🥔", name: "Potatoes", area: "Minya, Egypt", qty: "8 tons", phone: "Verified Coop" },
-            { icon: "🌱", name: "Rice", area: "Kafr El Sheikh, Egypt", qty: "6 tons", phone: "Verified Coop" }
-        ];
+        // Marketplace listings are loaded from the server database (saved permanently)
+        let listings = [];
 
         function renderMarketplace() {
             const grid = document.getElementById('marketGrid');
             grid.innerHTML = listings.map(item => `
                 <article class="crop-card">
                     <div>
-                        <div style="font-size:28px;">${item.icon}</div>
-                        <h3>${item.name}</h3>
-                        <p>📍 ${item.area}</p>
-                        <p>📦 Quantity: ${item.qty}</p>
-                        <p>📞 Contact: ${item.phone}</p>
+                        <div style="font-size:28px;">${escapeHtml(item.icon)}</div>
+                        <h3>${escapeHtml(item.name)}</h3>
+                        <p>📍 ${escapeHtml(item.area)}</p>
+                        <p>📦 Quantity: ${escapeHtml(item.qty)}</p>
+                        <p>📞 Contact: ${escapeHtml(item.phone)}</p>
                     </div>
-                    <button class="btn-locate" onclick="locateOfferOnRadar('${item.area}')">
+                    <button class="btn-locate" data-area="${escapeHtml(item.area)}" onclick="locateOfferOnRadar(this.dataset.area)">
                         🛰️ Locate on Radar
                     </button>
                 </article>
             `).join('');
         }
-        renderMarketplace();
+
+        async function loadMarketplace() {
+            try {
+                listings = await api('/api/market');
+                renderMarketplace();
+            } catch (e) {}
+        }
+        loadMarketplace();
+
+        // Restore the user's saved worker / investor profile
+        api('/api/my-profile').then(p => {
+            if (p.investor) {
+                document.getElementById('investorPhone').value = p.investor.phone === 'Not provided' ? '' : p.investor.phone;
+                showInvestorResult(p.investor.phone);
+            }
+            if (p.worker) {
+                document.getElementById('workerJob').value = p.worker.job;
+                document.getElementById('workerPhone').value = p.worker.phone === 'Not provided' ? '' : p.worker.phone;
+                document.getElementById('workerAvail').value = p.worker.availability;
+                showWorkerResult(p.worker.job, p.worker.phone, p.worker.availability);
+            }
+        }).catch(() => {});
 
         function locateOfferOnRadar(area) {
             document.getElementById('searchInput').value = area;
@@ -463,41 +510,84 @@
 
         function updateCropNotice() {
             const crop = document.getElementById('cropSelect').value;
-            const locText = lockedLocation ? `Locked sector: <b>${lockedLocation.name}</b>.` : `Scan your land on the satellite map above.`;
-            document.getElementById('cropNotice').innerHTML = `Selected crop: <b>${crop}</b>. ${locText}`;
+            const cropText = crop ? `Selected crop: <b>${escapeHtml(crop)}</b>.` : `No crop selected yet.`;
+            const locText = lockedLocation ? `Locked sector: <b>${escapeHtml(lockedLocation.name)}</b>.` : `Scan your land on the satellite map above.`;
+            document.getElementById('cropNotice').innerHTML = `${cropText} ${locText}`;
         }
 
-        function publishCropListing() {
-            const crop = document.getElementById('cropSelect').value;
+        const CROP_ICONS = {
+            "Wheat": "🌾", "Rice": "🌱", "Maize": "🌽", "Tomatoes": "🍅", "Potatoes": "🥔", "Sweet Potatoes": "🍠",
+            "Onions": "🧅", "Garlic": "🧄", "Cucumbers": "🥒", "Peppers": "🫑", "Eggplant": "🍆", "Carrots": "🥕",
+            "Cabbage": "🥬", "Lettuce": "🥬", "Spinach": "🥬", "Peanuts": "🥜", "Sunflower": "🌻", "Olives": "🫒",
+            "Oranges": "🍊", "Lemons": "🍋", "Mangoes": "🥭", "Grapes": "🍇", "Bananas": "🍌", "Strawberries": "🍓",
+            "Watermelon": "🍉", "Cantaloupe": "🍈", "Apples": "🍎", "Peaches": "🍑", "Coffee": "☕", "Tea": "🍵"
+        };
+
+        async function publishCropListing() {
+            const crop = commitCropInput();
+            const notice = document.getElementById('cropNotice');
+            if (!crop) {
+                notice.innerHTML = `❌ Choose a target crop first.`;
+                return;
+            }
             const qty = document.getElementById('cropQty').value.trim() || "5 tons";
             const phone = document.getElementById('cropPhone').value.trim() || "Contact Farmer";
             const area = lockedLocation ? lockedLocation.name : "Nile Delta, Egypt";
 
-            listings.unshift({ icon: "🌿", name: crop, area: area, qty: qty, phone: phone });
-            renderMarketplace();
-
-            document.getElementById('cropNotice').innerHTML =
-                `✅ Published <b>${qty} of ${crop}</b> (${area}) to the Investor Marketplace! Switch to the Investor tab to view it.`;
+            try {
+                const data = await api('/api/market', {
+                    icon: CROP_ICONS[crop] || "🌿", name: crop, area: area, qty: qty, phone: phone,
+                    lat: lockedLocation ? lockedLocation.lat : null, lon: lockedLocation ? lockedLocation.lon : null
+                });
+                listings.unshift(data.listing);
+                renderMarketplace();
+                notice.innerHTML =
+                    `✅ Published <b>${escapeHtml(qty)} of ${escapeHtml(crop)}</b> (${escapeHtml(area)}) to the Investor Marketplace! Switch to the Investor tab to view it.`;
+            } catch (e) {
+                notice.innerHTML = `❌ Could not publish: ${escapeHtml(e.message)}`;
+            }
         }
 
-        function saveInvestorProfile() {
-            const phone = document.getElementById('investorPhone').value.trim() || "Not provided";
+        function showInvestorResult(phone) {
             const res = document.getElementById('investorResult');
             res.classList.remove('hidden');
-            res.innerHTML = `📈 <b>${currentUser}</b> • Investor Contact Phone: <b>${phone}</b>`;
+            res.innerHTML = `📈 <b>${escapeHtml(currentUser)}</b> • Investor Contact Phone: <b>${escapeHtml(phone)}</b>`;
         }
 
-        function saveWorkerProfile() {
+        async function saveInvestorProfile() {
+            const phone = document.getElementById('investorPhone').value.trim() || "Not provided";
+            try {
+                const data = await api('/api/investors', { phone });
+                showInvestorResult(data.profile.phone);
+            } catch (e) {
+                const res = document.getElementById('investorResult');
+                res.classList.remove('hidden');
+                res.innerHTML = `❌ Could not save: ${escapeHtml(e.message)}`;
+            }
+        }
+
+        function showWorkerResult(job, phone, avail) {
+            const res = document.getElementById('workerResult');
+            res.classList.remove('hidden');
+            res.innerHTML = `👷 <b>${escapeHtml(currentUser)}</b> • Role: <b>${escapeHtml(job)}</b> | Phone: <b>${escapeHtml(phone)}</b> | Status: <b>${escapeHtml(avail)}</b>`;
+        }
+
+        async function saveWorkerProfile() {
             const job = document.getElementById('workerJob').value;
             const phone = document.getElementById('workerPhone').value.trim() || "Not provided";
             const avail = document.getElementById('workerAvail').value;
-            const res = document.getElementById('workerResult');
-            res.classList.remove('hidden');
-            res.innerHTML = `👷 <b>${currentUser}</b> • Role: <b>${job}</b> | Phone: <b>${phone}</b> | Status: <b>${avail}</b>`;
+            try {
+                const data = await api('/api/workers', { job, phone, availability: avail });
+                showWorkerResult(data.profile.job, data.profile.phone, data.profile.availability);
+            } catch (e) {
+                const res = document.getElementById('workerResult');
+                res.classList.remove('hidden');
+                res.innerHTML = `❌ Could not save: ${escapeHtml(e.message)}`;
+            }
         }
 
         // ===== Shared dark dropdown (keyboard + mouse) =====
-        function setupDropdown(input, list, getItems, onPick, headText) {
+        function setupDropdown(input, list, getItems, onPick, headText, emptyText) {
             let activeIndex = -1;
             let current = [];
 
@@ -509,10 +599,11 @@
                 const head = typeof headText === 'function' ? headText(current.length) : headText;
                 if (head) html += `<div class="dropdown-head">${head}</div>`;
                 if (current.length === 0) {
-                    html += `<div class="dropdown-empty">No matches found</div>`;
+                    const empty = typeof emptyText === 'function' ? emptyText(input.value.trim()) : 'No matches found';
+                    html += `<div class="dropdown-empty">${empty}</div>`;
                 } else {
                     html += current.map((it, i) =>
-                        `<div class="dropdown-item" data-i="${i}">${it}</div>`).join('');
+                        `<div class="dropdown-item" data-i="${i}">${escapeHtml(it)}</div>`).join('');
                 }
                 list.innerHTML = html;
                 list.classList.remove('hidden');
@@ -572,12 +663,24 @@
             document.getElementById('cropList'),
             () => CROPS,
             pickCrop,
-            (n) => `${n} of ${CROPS.length} crops`
+            (n) => `${n} of ${CROPS.length} crops`,
+            (typed) => typed ? `Press Enter to use "${escapeHtml(typed)}"` : 'No matches found'
         );
         function pickCrop(crop) {
             cropInput.value = crop;
             document.getElementById('cropSelect').value = crop;
             updateCropNotice();
+        }
+        // Typed text is accepted as-is; if it matches a listed crop, use the list spelling
+        function canonicalCrop(text) {
+            const q = text.trim().replace(/\s+/g, ' ');
+            return CROPS.find(c => c.toLowerCase() === q.toLowerCase()) || q;
+        }
+        function commitCropInput() {
+            const typed = cropInput.value.trim();
+            if (typed) pickCrop(canonicalCrop(typed));
+            else cropInput.value = document.getElementById('cropSelect').value;
+            return document.getElementById('cropSelect').value;
         }
         function toggleCropList() {
             const list = document.getElementById('cropList');
@@ -586,16 +689,14 @@
         }
         cropInput.addEventListener('keydown', e => {
             if (e.key !== 'Enter') return;
-            const q = cropInput.value.trim().toLowerCase();
-            const match = CROPS.find(c => c.toLowerCase() === q) || CROPS.find(c => c.toLowerCase().includes(q));
-            if (match) { pickCrop(match); cropDropdown.close(); }
+            // Enter without picking from the list = use exactly what was typed
+            commitCropInput();
+            cropDropdown.close();
         });
         cropInput.addEventListener('focus', () => cropInput.select());
         cropInput.addEventListener('blur', () => {
-            // If the typed text isn't a valid crop, restore the last chosen one
-            setTimeout(() => {
-                if (!CROPS.includes(cropInput.value)) cropInput.value = document.getElementById('cropSelect').value;
-            }, 150);
+            // Keep whatever the user typed (any crop); empty box restores the last chosen crop
+            setTimeout(commitCropInput, 150);
         });
 
         // ===== Location search: recent searches list (dark, replaces browser list) =====
@@ -704,46 +805,116 @@
             return rings;
         }
 
-        async function fetchRealPolygonFromOverpass(lat, lon) {
+        // ===== Boundary polygon from OpenStreetMap (Overpass) =====
+        const OVERPASS_ENDPOINTS = [
+            'https://overpass-api.de/api/interpreter',
+            'https://overpass.kumi.systems/api/interpreter'
+        ];
+        const PLACE_WORDS = ['قرية', 'مدينة', 'مركز', 'ناحية', 'نجع', 'عزبة', 'village', 'town', 'city', 'markaz', 'district', 'county'];
+
+        // Lowercase, strip Arabic diacritics, unify alef/yaa/taa-marbuta, drop punctuation
+        function cleanName(s) {
+            return String(s || '').toLowerCase()
+                .replace(/[\u064B-\u065F\u0640]/g, '')
+                .replace(/[أإآ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه')
+                .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+                .replace(/\s+/g, ' ').trim();
+        }
+        const PLACE_WORDS_CLEAN = new Set(PLACE_WORDS.map(cleanName));
+        function normPlaceName(s) {
+            return cleanName(s).split(' ').filter(w => w && !PLACE_WORDS_CLEAN.has(w)).join(' ');
+        }
+
+        function closeRing(ring) {
+            const a = ring[0], b = ring[ring.length - 1];
+            if (a[0] !== b[0] || a[1] !== b[1]) ring.push([...a]);
+            return ring;
+        }
+
+        // Ray casting: is the point (lat, lon) inside this ring of [lon, lat] pairs?
+        function pointInRing(lat, lon, ring) {
+            let inside = false;
+            for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+                const xi = ring[i][0], yi = ring[i][1], xj = ring[j][0], yj = ring[j][1];
+                if ((yi > lat) !== (yj > lat) && lon < (xj - xi) * (lat - yi) / (yj - yi) + xi) inside = !inside;
+            }
+            return inside;
+        }
+
+        async function runOverpass(query) {
+            for (const url of OVERPASS_ENDPOINTS) {
+                try {
+                    const res = await fetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                        body: 'data=' + encodeURIComponent(query)
+                    });
+                    if (!res.ok) continue;
+                    const json = await res.json();
+                    if (json && Array.isArray(json.elements)) return json.elements;
+                } catch (e) { /* try the next mirror */ }
+            }
+            return null;
+        }
+
+        // names: the searched name and the names Nominatim knows for the place (Arabic / English)
+        async function fetchRealPolygonFromOverpass(lat, lon, names) {
+            const wanted = new Set((names || []).map(normPlaceName).filter(Boolean));
             const overpassQuery = `
-                [out:json][timeout:12];
+                [out:json][timeout:25];
                 is_in(${lat},${lon})->.a;
                 (
                   rel(pivot.a)["boundary"="administrative"]["admin_level"~"^(6|7|8|9|10)$"];
                   rel(pivot.a)["place"~"city|town|village|suburb|hamlet"];
                   way(pivot.a)["place"~"city|town|village|suburb|hamlet"];
                   way(around:900,${lat},${lon})["place"~"village|town|city|suburb|hamlet"];
-                  way(around:700,${lat},${lon})["landuse"="residential"];
+                  rel(around:900,${lat},${lon})["place"~"village|town|city|suburb|hamlet"];
                 );
                 out geom;
             `;
-            try {
-                const res = await fetch('https://overpass-api.de/api/interpreter', { method: 'POST', body: overpassQuery });
-                const json = await res.json();
-                if (!json.elements || json.elements.length === 0) return null;
+            const elements = await runOverpass(overpassQuery);
+            if (!elements) return null;
 
-                let candidates = [];
-                for (const el of json.elements) {
-                    if (el.type === 'way' && el.geometry && el.geometry.length >= 4) {
-                        const ring = el.geometry.map(pt => [pt.lon, pt.lat]);
-                        if (ring[0][0] !== ring[ring.length - 1][0] || ring[0][1] !== ring[ring.length - 1][1]) ring.push([...ring[0]]);
-                        const area = calcRingArea(ring);
-                        if (area > 0) candidates.push({ geojson: { type: "Polygon", coordinates: [ring] }, area });
-                    } else if (el.type === 'relation' && el.members) {
-                        const outerWays = el.members.filter(m => m.type === 'way' && m.role === 'outer' && m.geometry && m.geometry.length > 1).map(m => m.geometry.map(pt => [pt.lon, pt.lat]));
-                        if (outerWays.length > 0) {
-                            const polygons = stitchWaysToPolygons(outerWays);
-                            if (polygons.length > 0) {
-                                const totalArea = polygons.reduce((sum, r) => sum + calcRingArea(r), 0);
-                                candidates.push({ geojson: { type: "MultiPolygon", coordinates: polygons.map(r => [r]) }, area: totalArea });
-                            }
-                        }
-                    }
-                }
-                if (candidates.length === 0) return null;
-                candidates.sort((a, b) => a.area - b.area);
-                return candidates[0].geojson;
-            } catch (e) { return null; }
+            const cands = [];
+            for (const el of elements) {
+                const tags = el.tags || {};
+                let rings = [], geojson = null;
+                if (el.type === 'way') {
+                    if (!el.geometry || el.geometry.length < 4) continue;
+                    const ring = closeRing(el.geometry.map(pt => [pt.lon, pt.lat]));
+                    rings = [ring];
+                    geojson = { type: 'Polygon', coordinates: [ring] };
+                } else if (el.type === 'relation' && el.members) {
+                    const outer = el.members
+                        .filter(m => m.type === 'way' && m.role === 'outer' && m.geometry && m.geometry.length > 1)
+                        .map(m => m.geometry.map(pt => [pt.lon, pt.lat]));
+                    if (outer.length === 0) continue;
+                    rings = stitchWaysToPolygons(outer);
+                    if (rings.length === 0) continue;
+                    geojson = { type: 'MultiPolygon', coordinates: rings.map(r => [r]) };
+                } else continue;
+
+                const area = rings.reduce((sum, r) => sum + calcRingArea(r), 0);
+                if (area <= 0) continue;
+
+                const ownNames = [tags.name, tags['name:en'], tags['name:ar'], tags.int_name, tags.alt_name, tags.official_name]
+                    .map(normPlaceName).filter(Boolean);
+                const nameMatch = ownNames.some(n => wanted.has(n));
+                const contains = rings.some(r => pointInRing(lat, lon, r));
+                // Ignore nearby shapes that neither carry the searched name nor contain the point
+                if (!nameMatch && !contains) continue;
+
+                cands.push({
+                    geojson, area, nameMatch, contains,
+                    isPlace: !!tags.place || tags.boundary === 'administrative'
+                });
+            }
+            if (cands.length === 0) return null;
+
+            // 1) same name as the search  2) contains the point  3) a real place/admin area  4) most specific (smallest)
+            cands.sort((a, b) =>
+                (b.nameMatch - a.nameMatch) || (b.contains - a.contains) || (b.isPlace - a.isPlace) || (a.area - b.area));
+            return cands[0].geojson;
         }
 
         function getSingleWordPlaceType(place) {
@@ -789,7 +960,14 @@
 
                 if (!geojsonShape) {
                     statusText.innerText = "EXTRACTING BOUNDARY POLYGON...";
-                    geojsonShape = await fetchRealPolygonFromOverpass(lat, lon);
+                    geojsonShape = await fetchRealPolygonFromOverpass(lat, lon, [
+                        query,
+                        place.name,
+                        place.namedetails && place.namedetails['name:en'],
+                        place.namedetails && place.namedetails['name:ar'],
+                        place.namedetails && place.namedetails.name,
+                        place.display_name && place.display_name.split(',')[0]
+                    ]);
                 }
 
                 var englishName = (place.namedetails && place.namedetails['name:en']) ? place.namedetails['name:en'] : (place.name || place.display_name.split(',')[0]);
@@ -835,18 +1013,63 @@
                     hud.style.display = 'block';
                     hud.innerHTML = `TARGET: <span>${englishName}</span> &nbsp;|&nbsp; TYPE: <span>${simplePlaceType}</span> &nbsp;|&nbsp; COORDS: <span>${lockedLocation.lat}, ${lockedLocation.lon}</span>`;
 
-                    document.getElementById('statMoisture').innerText = `Ready (${lockedLocation.lat}°)`;
-                    document.getElementById('statMoistureSub').innerText = `NASA SMAP sector locked for ${englishName}.`;
-                    document.getElementById('statWeather').innerText = `Ready (${lockedLocation.lon}°)`;
-                    document.getElementById('statWeatherSub').innerText = `NASA POWER climate grid aligned to ${englishName}.`;
-                    document.getElementById('statSoil').innerText = `Sector Verified`;
-                    document.getElementById('statSoilSub').innerText = `Ready for lab or SoilGrids integration.`;
                     updateCropNotice();
-
-                    fetch('/process-location', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lat: center.lat, lon: center.lng, name: englishName }) });
+                    loadTelemetry(lockedLocation);
                 }, 1400);
 
             } finally { btn.disabled = false; btn.innerText = "Scan"; }
+        }
+
+        // ===== Real NASA POWER + SoilGrids data for the locked location =====
+        function setCard(id, main, sub) {
+            document.getElementById(id).innerText = main;
+            document.getElementById(id + 'Sub').innerText = sub;
+        }
+        function fmtDate(d) {
+            return d ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}` : '';
+        }
+        async function loadTelemetry(loc) {
+            setCard('statMoisture', 'Downloading...', `Contacting NASA POWER for ${loc.name}...`);
+            setCard('statWeather', 'Downloading...', `Contacting NASA POWER for ${loc.name}...`);
+            setCard('statSoil', 'Downloading...', `Contacting ISRIC SoilGrids for ${loc.name}...`);
+            try {
+                const t = await api('/process-location', { lat: parseFloat(loc.lat), lon: parseFloat(loc.lon), name: loc.name });
+                if (lockedLocation !== loc) return; // user already scanned another place
+                loc.telemetry = { nasa: t.nasa, soil: t.soil };
+
+                const n = t.nasa;
+                if (n && n.soil_moisture_top_pct !== null) {
+                    setCard('statMoisture', `${n.soil_moisture_top_pct}% surface wetness`,
+                        `Root zone ${n.soil_moisture_root_pct ?? '—'}% • ${fmtDate(n.soil_moisture_date)} • ${loc.name}`);
+                } else {
+                    setCard('statMoisture', 'Feed unavailable', 'NASA POWER has no soil moisture for this point right now.');
+                }
+                if (n && n.temp_avg_7d_c !== null) {
+                    setCard('statWeather', `${n.temp_avg_7d_c}°C • ${n.rain_7d_mm ?? 0} mm rain`,
+                        `7-day avg (${n.temp_min_7d_c}–${n.temp_max_7d_c}°C) • 30-day rain ${n.rain_30d_mm ?? 0} mm • Solar ${n.solar_avg_7d ?? '—'} ${n.solar_units}`);
+                } else {
+                    setCard('statWeather', 'Feed unavailable', 'NASA POWER climate data is not available right now.');
+                }
+                const s = t.soil;
+                if (s && s.ph !== null) {
+                    setCard('statSoil', `pH ${s.ph}`,
+                        `N ${s.nitrogen_g_kg ?? '—'} g/kg • Organic C ${s.organic_carbon_g_kg ?? '—'} g/kg • Clay ${s.clay_pct ?? '—'}% • Sand ${s.sand_pct ?? '—'}% (0–5 cm)`);
+                } else {
+                    setCard('statSoil', 'No soil data', 'SoilGrids has no topsoil data here (water, desert rock or built-up area).');
+                }
+            } catch (e) {
+                if (lockedLocation !== loc) return;
+                setCard('statMoisture', 'Feed unavailable', 'Could not reach NASA POWER. Try scanning again.');
+                setCard('statWeather', 'Feed unavailable', 'Could not reach NASA POWER. Try scanning again.');
+                setCard('statSoil', 'Feed unavailable', 'Could not reach SoilGrids. Try scanning again.');
+            }
+        }
+
+        function formatReply(text) {
+            return escapeHtml(text)
+                .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+                .replace(/^\s*[\*\-]\s+/gm, '• ')
+                .replace(/\n/g, '<br>');
         }
 
         document.getElementById('chatInput').addEventListener('keypress', function (e) { if (e.key === 'Enter') sendChat(); });
@@ -858,21 +1081,26 @@
 
             const chatBox = document.getElementById('chatBox');
             chatBox.classList.remove('hidden');
-            chatBox.innerHTML += `<div class="msg user">${question}</div>`;
-            input.value = ''; chatBox.scrollTop = chatBox.scrollHeight;
-            const crop = document.getElementById('cropSelect').value;
+            chatBox.insertAdjacentHTML('beforeend', `<div class="msg user" dir="auto">${escapeHtml(question)}</div>`);
+            input.value = '';
+            const thinking = document.createElement('div');
+            thinking.className = 'msg bot';
+            thinking.innerText = '...';
+            chatBox.appendChild(thinking);
+            chatBox.scrollTop = chatBox.scrollHeight;
+            const crop = commitCropInput();
 
             try {
-                const res = await fetch('/ask-assistant', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ question: question, role: currentRole, location: lockedLocation, crop: crop })
+                const data = await api('/ask-assistant', {
+                    question: question, role: currentRole, location: lockedLocation, crop: crop,
+                    history: chatHistory.slice(-10)
                 });
-                const data = await res.json();
-                chatBox.innerHTML += `<div class="msg bot">${data.reply}</div>`;
+                thinking.setAttribute('dir', 'auto');
+                thinking.innerHTML = formatReply(data.reply);
+                chatHistory.push({ role: 'user', text: question }, { role: 'assistant', text: data.reply });
                 chatBox.scrollTop = chatBox.scrollHeight;
             } catch (err) {
-                chatBox.innerHTML += `<div class="msg bot">Connection error with Cyber Galaxy backend.</div>`;
+                thinking.innerText = 'Connection error with Cyber Galaxy backend.';
             }
         }
     </script>
