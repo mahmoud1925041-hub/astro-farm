@@ -1,0 +1,880 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cyber Galaxy • Satellite Radar</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #040810; color: #e6f4f1; overflow-x: hidden;
+        }
+
+        /* Navbar */
+        .navbar {
+            position: sticky; top: 0; z-index: 1100;
+            background: rgba(5, 11, 20, 0.96); border-bottom: 1px solid rgba(0, 255, 204, 0.3);
+            padding: 12px 4%; display: flex; justify-content: space-between;
+            align-items: center; flex-wrap: wrap; gap: 12px;
+        }
+        .brand { font-size: 22px; font-weight: 900; letter-spacing: 1px; color: #fff; }
+        .brand span { color: #00ffcc; }
+
+        .role-tabs {
+            display: flex; gap: 8px; background: #081220; padding: 5px;
+            border-radius: 8px; border: 1px solid rgba(0, 255, 204, 0.25);
+        }
+        .role-tab {
+            background: transparent; border: none; color: #8ba3b8; padding: 7px 14px;
+            border-radius: 6px; font-size: 13px; font-weight: 700; cursor: pointer; transition: 0.2s;
+        }
+        .role-tab.active { background: #00ffcc; color: #040810; }
+
+        .nav-right { display: flex; align-items: center; gap: 12px; font-size: 13px; color: #a8c5db; }
+        .btn-logout {
+            background: transparent; border: 1px solid rgba(0, 255, 204, 0.45);
+            color: #00ffcc; padding: 7px 14px; border-radius: 6px; font-size: 12px;
+            font-weight: bold; cursor: pointer;
+        }
+        .btn-logout:hover { background: rgba(0, 255, 204, 0.15); }
+
+        /* Radar Viewport */
+        .radar-wrapper {
+            position: relative; width: 100%; height: 74vh; min-height: 500px;
+            border-bottom: 2px solid rgba(0, 255, 204, 0.35); background: #040810;
+        }
+        #map { width: 100%; height: 100%; z-index: 1; background: #040810; }
+        .satellite-layer { filter: contrast(1.12) saturate(1.18) brightness(0.95); }
+
+        /* Search Bar Overlay */
+        .ui-panel {
+            position: absolute; top: 20px; left: 50%; transform: translateX(-50%); z-index: 999;
+            display: flex; align-items: center; gap: 10px; background: rgba(6, 12, 22, 0.94);
+            padding: 10px 18px; border-radius: 10px; border: 1.5px solid #00ffcc;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.9), 0 0 18px rgba(0, 255, 204, 0.2);
+        }
+        .ui-panel input {
+            background: transparent; border: none; color: #fff; font-size: 15px; outline: none; width: 310px;
+        }
+        .ui-panel input::placeholder { color: #6c8299; }
+
+        .btn-scan {
+            background: #00ffcc; border: none; padding: 9px 22px; border-radius: 6px;
+            cursor: pointer; font-weight: 800; color: #040810; font-size: 13px;
+            text-transform: uppercase; letter-spacing: 1px;
+        }
+        .btn-scan:hover:not(:disabled) { background: #fff; box-shadow: 0 0 15px #00ffcc; }
+        .btn-scan:disabled { background: #1d3b38; color: #00ffcc; cursor: wait; }
+        
+        .btn-reset {
+            background: transparent; border: 1px solid rgba(0, 255, 204, 0.45);
+            padding: 8px 13px; border-radius: 6px; cursor: pointer; color: #00ffcc;
+            font-size: 12px; font-weight: 700; text-transform: uppercase;
+        }
+        .btn-reset:hover { background: rgba(0, 255, 204, 0.15); }
+
+        .scan-status {
+            position: absolute; top: 82px; left: 50%; transform: translateX(-50%); z-index: 999;
+            background: rgba(6, 12, 22, 0.95); border: 1px solid #00ffcc; color: #00ffcc;
+            padding: 7px 18px; border-radius: 20px; font-size: 12px; font-weight: bold;
+            letter-spacing: 1.4px; display: none; align-items: center; gap: 10px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.85);
+        }
+        .spinner {
+            width: 13px; height: 13px; border: 2px solid rgba(0, 255, 204, 0.25);
+            border-top-color: #00ffcc; border-radius: 50%; animation: spin 0.7s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .hud-info {
+            position: absolute; bottom: 18px; left: 18px; z-index: 999;
+            background: rgba(6, 12, 22, 0.92); border-left: 4px solid #00ffcc;
+            border-top: 1px solid rgba(0, 255, 204, 0.3); border-right: 1px solid rgba(0, 255, 204, 0.3);
+            border-bottom: 1px solid rgba(0, 255, 204, 0.3); padding: 10px 16px;
+            border-radius: 6px; color: #e0f7fa; font-size: 12px; letter-spacing: 0.8px; display: none;
+        }
+        .hud-info span { color: #00ffcc; font-weight: bold; }
+
+        .continent-label {
+            color: rgba(255, 255, 255, 0.85); font-size: 16px; font-weight: 800;
+            letter-spacing: 5px; text-shadow: 0 2px 10px #000, 0 0 6px #000;
+            pointer-events: none !important; cursor: default !important;
+            white-space: nowrap; text-align: center;
+        }
+        .target-name-label {
+            color: #00ffcc; background: rgba(6, 12, 22, 0.92); padding: 6px 15px;
+            border: 1.5px solid #00ffcc; border-radius: 6px; font-size: 15px; font-weight: bold;
+            letter-spacing: 2px; box-shadow: 0 4px 20px rgba(0,0,0,0.9);
+            pointer-events: none !important; white-space: nowrap; text-align: center; display: inline-block;
+        }
+        .boundary-glow {
+            filter: drop-shadow(0 0 8px #00ffcc) drop-shadow(0 0 18px rgba(0, 255, 204, 0.7));
+            animation: border-pulse 1.4s infinite alternate;
+        }
+        @keyframes border-pulse {
+            0% { fill-opacity: 0.08; stroke-opacity: 0.85; }
+            100% { fill-opacity: 0.15; stroke-opacity: 1; }
+        }
+
+        /* Dashboard Container */
+        .dashboard { width: 92%; max-width: 1180px; margin: 30px auto 50px; }
+        .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
+        .stat-card { background: #081220; border: 1px solid rgba(0, 255, 204, 0.25); border-radius: 12px; padding: 20px; }
+        .stat-card small { display: block; color: #7c97ad; font-size: 12px; margin: 8px 0 4px; text-transform: uppercase; letter-spacing: 1px; }
+        .stat-card strong { font-size: 17px; color: #00ffcc; }
+        .stat-card p { margin: 6px 0 0; font-size: 12px; color: #8ba3b8; }
+
+        .panel { background: #081220; border: 1px solid rgba(0, 255, 204, 0.25); border-radius: 14px; padding: 26px; margin-bottom: 22px; }
+        .eyebrow { color: #00ffcc; font-size: 11px; font-weight: 800; letter-spacing: 2px; margin: 0 0 6px; }
+        .panel h2 { margin: 0 0 12px; font-size: 22px; }
+        .muted { color: #8ba3b8; font-size: 13px; line-height: 1.7; margin-bottom: 16px; }
+
+        .form-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 14px; }
+        .field-label { display: block; font-size: 12px; font-weight: bold; color: #cde4f7; margin-bottom: 6px; }
+        .dash-input {
+            width: 100%; padding: 12px 14px; background: #040810;
+            border: 1px solid rgba(0, 255, 204, 0.3); border-radius: 8px;
+            color: #fff; font-size: 14px; outline: none;
+        }
+        .dash-input:focus { border-color: #00ffcc; }
+
+        .notice { background: rgba(0, 255, 204, 0.07); border: 1px solid rgba(0, 255, 204, 0.3); padding: 14px 16px; border-radius: 8px; font-size: 13px; color: #cde4f7; margin-top: 14px; }
+
+        .market-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+        .crop-card { background: #040810; border: 1px solid rgba(0, 255, 204, 0.25); border-radius: 12px; padding: 18px; display: flex; flex-direction: column; justify-content: space-between; }
+        .crop-card h3 { margin: 8px 0 6px; color: #00ffcc; }
+        .crop-card p { margin: 4px 0; font-size: 13px; color: #9db5c9; }
+        .btn-locate { margin-top: 12px; background: rgba(0, 255, 204, 0.12); border: 1px solid #00ffcc; color: #00ffcc; padding: 8px 12px; border-radius: 6px; font-size: 12px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        .btn-locate:hover { background: #00ffcc; color: #040810; }
+
+        .chat-box { background: #040810; border: 1px solid rgba(0, 255, 204, 0.25); border-radius: 10px; padding: 16px; min-height: 140px; max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+        .msg { max-width: 82%; padding: 10px 14px; border-radius: 10px; font-size: 13px; line-height: 1.6; }
+        .msg.bot { background: rgba(0, 255, 204, 0.1); border: 1px solid rgba(0, 255, 204, 0.25); color: #e6f4f1; align-self: flex-start; }
+        .msg.user { background: #00ffcc; color: #040810; font-weight: 600; align-self: flex-end; }
+        .chat-row { display: flex; gap: 10px; }
+        .chat-row .dash-input { flex: 1; }
+        .hidden { display: none !important; }
+
+        /* Remove browser autofill white/blue box from all inputs */
+        input:-webkit-autofill,
+        input:-webkit-autofill:hover,
+        input:-webkit-autofill:focus {
+            -webkit-text-fill-color: #fff;
+            -webkit-box-shadow: 0 0 0 1000px #040810 inset;
+            caret-color: #fff;
+            transition: background-color 9999s ease-in-out 0s;
+        }
+        .ui-panel input:-webkit-autofill,
+        .ui-panel input:-webkit-autofill:hover,
+        .ui-panel input:-webkit-autofill:focus {
+            -webkit-box-shadow: 0 0 0 1000px #060c16 inset;
+        }
+
+        /* Native selects: dark options like the rest of the site */
+        select.dash-input option { background: #040810; color: #e6f4f1; }
+
+        /* Shared dark dropdown list (search suggestions + crop list) */
+        .search-wrap { position: relative; }
+        .combo { position: relative; }
+        .combo .dash-input { padding-right: 40px; }
+        .combo-toggle {
+            position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+            background: transparent; border: none; color: #00ffcc; font-size: 14px;
+            cursor: pointer; padding: 6px 8px;
+        }
+        .dropdown-list {
+            position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 1200;
+            background: #040810; border: 1px solid rgba(0, 255, 204, 0.4); border-radius: 8px;
+            max-height: 240px; overflow-y: auto; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.9);
+            padding: 4px 0; text-align: left;
+        }
+        .search-wrap .dropdown-list { top: calc(100% + 14px); left: -18px; right: -18px; min-width: 260px; }
+        .dropdown-head {
+            padding: 6px 14px; font-size: 11px; font-weight: 800; letter-spacing: 1.5px;
+            color: #6c8299; text-transform: uppercase;
+        }
+        .dropdown-item {
+            padding: 9px 14px; font-size: 14px; color: #e6f4f1; cursor: pointer;
+            display: flex; align-items: center; gap: 8px;
+        }
+        .dropdown-item:hover, .dropdown-item.active { background: rgba(0, 255, 204, 0.15); color: #00ffcc; }
+        .dropdown-item.selected { color: #00ffcc; font-weight: 700; }
+        .dropdown-empty { padding: 10px 14px; font-size: 13px; color: #6c8299; }
+        .dropdown-list::-webkit-scrollbar { width: 6px; }
+        .dropdown-list::-webkit-scrollbar-thumb { background: rgba(0, 255, 204, 0.35); border-radius: 3px; }
+
+        /* Chat: messages + input merged into one box */
+        .chat-container {
+            background: #040810; border: 1px solid rgba(0, 255, 204, 0.25);
+            border-radius: 10px; padding: 14px;
+        }
+        .chat-container .chat-box {
+            background: transparent; border: none; border-radius: 0; padding: 0 0 14px;
+            min-height: 0; margin-bottom: 14px; border-bottom: 1px solid rgba(0, 255, 204, 0.15);
+        }
+
+        @media (max-width: 800px) {
+            .stats-grid, .form-grid, .market-grid { grid-template-columns: 1fr; }
+            .ui-panel input { width: 200px; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Agricultural NDVI Gradient Defs for Leaflet Polygons -->
+    <svg style="width:0;height:0;position:absolute;" aria-hidden="true" focusable="false">
+      <defs>
+        <linearGradient id="agriGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#2ca25f" />
+          <stop offset="50%" stop-color="#addd8e" />
+          <stop offset="100%" stop-color="#ffeda0" />
+        </linearGradient>
+      </defs>
+    </svg>
+
+    <header class="navbar">
+        <div class="brand">Cyber <span>Galaxy</span></div>
+
+        <div class="role-tabs">
+            <button class="role-tab" id="tab-farmer" onclick="switchRole('farmer')">🌾 Farmer</button>
+            <button class="role-tab" id="tab-investor" onclick="switchRole('investor')">📈 Investor</button>
+            <button class="role-tab" id="tab-worker" onclick="switchRole('worker')">👷 Worker</button>
+        </div>
+
+        <div class="nav-right">
+            <span id="displayUser"></span>
+            <button class="btn-logout" onclick="logoutSystem()">Logout</button>
+        </div>
+    </header>
+
+    <div class="radar-wrapper">
+        <div class="ui-panel">
+            <div class="search-wrap">
+                <input type="text" id="searchInput" placeholder="Enter Country, City, or Village..." autocomplete="off" autofocus>
+                <div id="searchList" class="dropdown-list hidden"></div>
+            </div>
+            <button id="scanBtn" class="btn-scan" onclick="scanLocation()">Scan</button>
+            <button class="btn-reset" onclick="resetWorldView()">World</button>
+        </div>
+
+        <div id="scanStatus" class="scan-status">
+            <div class="spinner"></div>
+            <span id="scanStatusText">SCANNING TARGET BOUNDARIES...</span>
+        </div>
+
+        <div id="hudInfo" class="hud-info"></div>
+        <div id="map"></div>
+    </div>
+
+    <!-- Hidden by default, shown after scanning a location -->
+    <main class="dashboard" id="dashboardMain" style="display: none;">
+
+        <!-- NASA TELEMETRY CARDS -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div style="font-size:24px;">💧</div>
+                <small>Soil Moisture (NASA SMAP)</small>
+                <strong id="statMoisture">Awaiting Satellite Lock</strong>
+                <p id="statMoistureSub">Scan a farm location on the radar above.</p>
+            </div>
+            <div class="stat-card">
+                <div style="font-size:24px;">🌡️</div>
+                <small>Climate & Solar (NASA POWER)</small>
+                <strong id="statWeather">Awaiting Satellite Lock</strong>
+                <p id="statWeatherSub">Temperature & precipitation feed standby.</p>
+            </div>
+            <div class="stat-card">
+                <div style="font-size:24px;">🧪</div>
+                <small>Soil Nutrients & pH</small>
+                <strong id="statSoil">Lab / Regional Feed</strong>
+                <p id="statSoilSub">Requires sector coordinates lock.</p>
+            </div>
+        </div>
+
+        <!-- FARMER SECTION -->
+        <div id="section-farmer">
+            <section class="panel">
+                <p class="eyebrow">CROP & SOIL INTELLIGENCE</p>
+                <h2>Analyze Target Land</h2>
+                <p class="muted">Select your target crop to prepare NASA Earth Observation parameters for your scanned boundary.</p>
+
+                <div class="form-grid">
+                    <div>
+                        <label class="field-label">Target Crop</label>
+                        <div class="combo">
+                            <input type="text" id="cropSearch" class="dash-input" value="Wheat" placeholder="Search crops..." autocomplete="off">
+                            <button type="button" class="combo-toggle" onclick="toggleCropList()" aria-label="Show all crops">▾</button>
+                            <div id="cropList" class="dropdown-list hidden"></div>
+                        </div>
+                        <input type="hidden" id="cropSelect" value="Wheat">
+                    </div>
+                    <div>
+                        <label class="field-label">Harvest Quantity</label>
+                        <input type="text" id="cropQty" class="dash-input" autocomplete="off">
+                    </div>
+                    <div>
+                        <label class="field-label">Farmer Contact Phone</label>
+                        <input type="text" id="cropPhone" class="dash-input" autocomplete="off">
+                    </div>
+                </div>
+
+                <button class="btn-scan" onclick="publishCropListing()">Publish Crop to Investor Marketplace</button>
+
+                <div id="cropNotice" class="notice">
+                    Selected crop: <b>Wheat</b>. Scan your land on the satellite map above to lock sector coordinates.
+                </div>
+            </section>
+        </div>
+
+        <!-- INVESTOR SECTION -->
+        <div id="section-investor" class="hidden">
+            <section class="panel">
+                <p class="eyebrow">INVESTMENT MARKETPLACE</p>
+                <h2>Available Crop & Land Opportunities</h2>
+                <p class="muted">Click "Locate on Radar" on any listing to fly the satellite directly to that agricultural region and inspect its boundaries.</p>
+
+                <div class="form-grid">
+                    <div>
+                        <label class="field-label">Investor Contact Phone</label>
+                        <input type="text" id="investorPhone" class="dash-input" autocomplete="off">
+                    </div>
+                    <div style="display:flex; align-items:flex-end;">
+                        <button class="btn-scan" onclick="saveInvestorProfile()">Save Contact Phone</button>
+                    </div>
+                </div>
+                <div id="investorResult" class="notice hidden" style="margin-bottom: 16px;"></div>
+
+                <div id="marketGrid" class="market-grid"></div>
+            </section>
+        </div>
+
+        <!-- WORKER SECTION -->
+        <div id="section-worker" class="hidden">
+            <section class="panel">
+                <p class="eyebrow">AGRICULTURAL WORKFORCE</p>
+                <h2>Create Your Specialist Profile</h2>
+
+                <div class="form-grid">
+                    <div>
+                        <label class="field-label">Specialty Role</label>
+                        <select id="workerJob" class="dash-input">
+                            <option>Farm Worker</option>
+                            <option>Irrigation Technician</option>
+                            <option>Tractor & Harvester Operator</option>
+                            <option>Agronomy Field Supervisor</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="field-label">Worker Contact Phone</label>
+                        <input type="text" id="workerPhone" class="dash-input" autocomplete="off">
+                    </div>
+                    <div>
+                        <label class="field-label">Availability Status</label>
+                        <select id="workerAvail" class="dash-input">
+                            <option value="Available">Available for Work</option>
+                            <option value="Busy">Currently Assigned</option>
+                        </select>
+                    </div>
+                </div>
+
+                <button class="btn-scan" onclick="saveWorkerProfile()">Activate Worker Profile</button>
+                <div id="workerResult" class="notice hidden"></div>
+            </section>
+        </div>
+
+        <!-- CYBER GALAXY AI COPILOT -->
+        <section class="panel">
+            <p class="eyebrow">CYBER GALAXY AI COPILOT</p>
+            <h2>Ask Satellite & Agronomy Assistant</h2>
+
+            <div class="chat-container">
+                <div id="chatBox" class="chat-box hidden"></div>
+
+                <div class="chat-row">
+                    <input type="text" id="chatInput" class="dash-input" placeholder="Ask about your scanned land, NASA data, or crops..." autocomplete="off">
+                    <button class="btn-scan" onclick="sendChat()">Send</button>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <script>
+        let currentUser = localStorage.getItem('cybergalaxy_user');
+        if (!currentUser) {
+            window.location.href = '/';
+        }
+
+        let currentRole = 'farmer';
+        let lockedLocation = null;
+
+        document.getElementById('displayUser').innerText = currentUser;
+
+        function logoutSystem() {
+            localStorage.removeItem('cybergalaxy_user');
+            window.location.href = '/';
+        }
+
+        function switchRole(role) {
+            currentRole = role;
+            ['farmer', 'investor', 'worker'].forEach(r => {
+                document.getElementById('tab-' + r).classList.toggle('active', r === role);
+                document.getElementById('section-' + r).classList.toggle('hidden', r !== role);
+            });
+        }
+        switchRole(currentRole);
+
+        let listings = [
+            { icon: "🌾", name: "Wheat", area: "Tanta, Egypt", qty: "12 tons", phone: "Verified Coop" },
+            { icon: "🍅", name: "Tomatoes", area: "Banha, Egypt", qty: "4 tons", phone: "Verified Coop" },
+            { icon: "🥔", name: "Potatoes", area: "Minya, Egypt", qty: "8 tons", phone: "Verified Coop" },
+            { icon: "🌱", name: "Rice", area: "Kafr El Sheikh, Egypt", qty: "6 tons", phone: "Verified Coop" }
+        ];
+
+        function renderMarketplace() {
+            const grid = document.getElementById('marketGrid');
+            grid.innerHTML = listings.map(item => `
+                <article class="crop-card">
+                    <div>
+                        <div style="font-size:28px;">${item.icon}</div>
+                        <h3>${item.name}</h3>
+                        <p>📍 ${item.area}</p>
+                        <p>📦 Quantity: ${item.qty}</p>
+                        <p>📞 Contact: ${item.phone}</p>
+                    </div>
+                    <button class="btn-locate" onclick="locateOfferOnRadar('${item.area}')">
+                        🛰️ Locate on Radar
+                    </button>
+                </article>
+            `).join('');
+        }
+        renderMarketplace();
+
+        function locateOfferOnRadar(area) {
+            document.getElementById('searchInput').value = area;
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            scanLocation();
+        }
+
+        function updateCropNotice() {
+            const crop = document.getElementById('cropSelect').value;
+            const locText = lockedLocation ? `Locked sector: <b>${lockedLocation.name}</b>.` : `Scan your land on the satellite map above.`;
+            document.getElementById('cropNotice').innerHTML = `Selected crop: <b>${crop}</b>. ${locText}`;
+        }
+
+        function publishCropListing() {
+            const crop = document.getElementById('cropSelect').value;
+            const qty = document.getElementById('cropQty').value.trim() || "5 tons";
+            const phone = document.getElementById('cropPhone').value.trim() || "Contact Farmer";
+            const area = lockedLocation ? lockedLocation.name : "Nile Delta, Egypt";
+
+            listings.unshift({ icon: "🌿", name: crop, area: area, qty: qty, phone: phone });
+            renderMarketplace();
+
+            document.getElementById('cropNotice').innerHTML =
+                `✅ Published <b>${qty} of ${crop}</b> (${area}) to the Investor Marketplace! Switch to the Investor tab to view it.`;
+        }
+
+        function saveInvestorProfile() {
+            const phone = document.getElementById('investorPhone').value.trim() || "Not provided";
+            const res = document.getElementById('investorResult');
+            res.classList.remove('hidden');
+            res.innerHTML = `📈 <b>${currentUser}</b> • Investor Contact Phone: <b>${phone}</b>`;
+        }
+
+        function saveWorkerProfile() {
+            const job = document.getElementById('workerJob').value;
+            const phone = document.getElementById('workerPhone').value.trim() || "Not provided";
+            const avail = document.getElementById('workerAvail').value;
+            const res = document.getElementById('workerResult');
+            res.classList.remove('hidden');
+            res.innerHTML = `👷 <b>${currentUser}</b> • Role: <b>${job}</b> | Phone: <b>${phone}</b> | Status: <b>${avail}</b>`;
+        }
+
+        // ===== Shared dark dropdown (keyboard + mouse) =====
+        function setupDropdown(input, list, getItems, onPick, headText) {
+            let activeIndex = -1;
+            let current = [];
+
+            function render(showAll) {
+                const q = showAll ? '' : input.value.trim().toLowerCase();
+                current = getItems().filter(it => it.toLowerCase().includes(q));
+                activeIndex = -1;
+                let html = '';
+                const head = typeof headText === 'function' ? headText(current.length) : headText;
+                if (head) html += `<div class="dropdown-head">${head}</div>`;
+                if (current.length === 0) {
+                    html += `<div class="dropdown-empty">No matches found</div>`;
+                } else {
+                    html += current.map((it, i) =>
+                        `<div class="dropdown-item" data-i="${i}">${it}</div>`).join('');
+                }
+                list.innerHTML = html;
+                list.classList.remove('hidden');
+            }
+            function close() { list.classList.add('hidden'); activeIndex = -1; }
+            function highlight() {
+                list.querySelectorAll('.dropdown-item').forEach((el, i) => {
+                    el.classList.toggle('active', i === activeIndex);
+                    if (i === activeIndex) el.scrollIntoView({ block: 'nearest' });
+                });
+            }
+
+            list.addEventListener('mousedown', e => {
+                const item = e.target.closest('.dropdown-item');
+                if (!item) return;
+                e.preventDefault();
+                onPick(current[+item.dataset.i]);
+                close();
+            });
+            input.addEventListener('focus', () => { if (getItems().length) render(true); });
+            input.addEventListener('input', () => render(false));
+            input.addEventListener('blur', () => setTimeout(close, 120));
+            input.addEventListener('keydown', e => {
+                const open = !list.classList.contains('hidden');
+                if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    if (!open) render(false);
+                    activeIndex = Math.min(activeIndex + 1, current.length - 1); highlight();
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    activeIndex = Math.max(activeIndex - 1, 0); highlight();
+                } else if (e.key === 'Escape') {
+                    close();
+                } else if (e.key === 'Enter' && open && activeIndex >= 0) {
+                    e.preventDefault(); e.stopImmediatePropagation();
+                    onPick(current[activeIndex]); close();
+                }
+            });
+            return { render, close };
+        }
+
+        // ===== Crop searchable list =====
+        const CROPS = [
+            "Wheat", "Rice", "Maize", "Barley", "Sorghum", "Millet", "Oats",
+            "Tomatoes", "Potatoes", "Sweet Potatoes", "Onions", "Garlic", "Cucumbers",
+            "Peppers", "Eggplant", "Zucchini", "Carrots", "Cabbage", "Cauliflower",
+            "Lettuce", "Spinach", "Okra", "Green Beans", "Fava Beans", "Lentils",
+            "Chickpeas", "Peas", "Peanuts", "Soybeans", "Sesame", "Sunflower",
+            "Cotton", "Sugarcane", "Sugar Beet", "Clover (Berseem)", "Alfalfa",
+            "Olives", "Dates", "Oranges", "Lemons", "Mangoes", "Grapes", "Bananas",
+            "Pomegranates", "Figs", "Guava", "Strawberries", "Watermelon",
+            "Cantaloupe", "Apples", "Apricots", "Peaches", "Flax", "Coffee", "Tea"
+        ];
+        const cropInput = document.getElementById('cropSearch');
+        const cropDropdown = setupDropdown(
+            cropInput,
+            document.getElementById('cropList'),
+            () => CROPS,
+            pickCrop,
+            (n) => `${n} of ${CROPS.length} crops`
+        );
+        function pickCrop(crop) {
+            cropInput.value = crop;
+            document.getElementById('cropSelect').value = crop;
+            updateCropNotice();
+        }
+        function toggleCropList() {
+            const list = document.getElementById('cropList');
+            if (list.classList.contains('hidden')) { cropInput.focus(); cropDropdown.render(true); }
+            else cropDropdown.close();
+        }
+        cropInput.addEventListener('keydown', e => {
+            if (e.key !== 'Enter') return;
+            const q = cropInput.value.trim().toLowerCase();
+            const match = CROPS.find(c => c.toLowerCase() === q) || CROPS.find(c => c.toLowerCase().includes(q));
+            if (match) { pickCrop(match); cropDropdown.close(); }
+        });
+        cropInput.addEventListener('focus', () => cropInput.select());
+        cropInput.addEventListener('blur', () => {
+            // If the typed text isn't a valid crop, restore the last chosen one
+            setTimeout(() => {
+                if (!CROPS.includes(cropInput.value)) cropInput.value = document.getElementById('cropSelect').value;
+            }, 150);
+        });
+
+        // ===== Location search: recent searches list (dark, replaces browser list) =====
+        function getRecentSearches() {
+            try { return JSON.parse(localStorage.getItem('cybergalaxy_recent') || '[]'); } catch (e) { return []; }
+        }
+        function saveRecentSearch(q) {
+            let recent = getRecentSearches().filter(r => r.toLowerCase() !== q.toLowerCase());
+            recent.unshift(q);
+            localStorage.setItem('cybergalaxy_recent', JSON.stringify(recent.slice(0, 8)));
+        }
+        const searchDropdown = setupDropdown(
+            document.getElementById('searchInput'),
+            document.getElementById('searchList'),
+            getRecentSearches,
+            (q) => { document.getElementById('searchInput').value = q; scanLocation(); },
+            'Recent searches'
+        );
+
+        // Map Initialization (Zoom 2 to show full continents & edges)
+        var map = L.map('map', {
+            zoomControl: false, scrollWheelZoom: false, doubleClickZoom: false, dragging: false
+        }).setView([20, 0], 2);
+
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            attribution: 'Esri Satellite', maxZoom: 18, maxNativeZoom: 17, className: 'satellite-layer'
+        }).addTo(map);
+
+        const continents = [
+            { name: "AFRICA", coords: [8.78, 25.50] },
+            { name: "ASIA", coords: [34.04, 95.61] },
+            { name: "EUROPE", coords: [51.5, 15.0] },
+            { name: "NORTH AMERICA", coords: [44.07, -100.54] },
+            { name: "SOUTH AMERICA", coords: [-14.23, -55.92] },
+            { name: "AUSTRALIA", coords: [-25.27, 133.77] },
+            { name: "ANTARCTICA", coords: [-78.86, 20.00] }
+        ];
+
+        var continentMarkers = [];
+        function showContinents() {
+            clearContinents();
+            continents.forEach(cont => {
+                var icon = L.divIcon({ className: 'continent-label', html: cont.name, iconSize: [160, 20] });
+                var m = L.marker(cont.coords, { icon: icon, interactive: false }).addTo(map);
+                continentMarkers.push(m);
+            });
+        }
+        function clearContinents() {
+            continentMarkers.forEach(m => map.removeLayer(m));
+            continentMarkers = [];
+        }
+        showContinents();
+
+        var currentOuterGlow = null; var currentBoundary = null; var currentLabel = null;
+
+        document.getElementById('searchInput').addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') scanLocation();
+        });
+
+        function resetWorldView() {
+            if (currentOuterGlow) map.removeLayer(currentOuterGlow);
+            if (currentBoundary) map.removeLayer(currentBoundary);
+            if (currentLabel) map.removeLayer(currentLabel);
+            
+            // Hide dashboard on reset
+            document.getElementById('dashboardMain').style.display = 'none';
+            
+            document.getElementById('hudInfo').style.display = 'none';
+            document.getElementById('searchInput').value = '';
+            lockedLocation = null;
+            map.flyTo([20, 0], 2, { animate: true, duration: 1.2 });
+            setTimeout(showContinents, 1200);
+        }
+
+        function calcRingArea(coords) {
+            let area = 0;
+            for (let i = 0; i < coords.length - 1; i++) { area += (coords[i][0] * coords[i + 1][1]) - (coords[i + 1][0] * coords[i][1]); }
+            return Math.abs(area / 2);
+        }
+
+        function stitchWaysToPolygons(ways) {
+            const used = new Array(ways.length).fill(false);
+            const rings = [];
+            const isClose = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 0.00025;
+
+            for (let i = 0; i < ways.length; i++) {
+                if (used[i]) continue;
+                used[i] = true;
+                let ring = [...ways[i]];
+                let extended = true;
+                while (extended) {
+                    extended = false;
+                    const tail = ring[ring.length - 1];
+                    for (let j = 0; j < ways.length; j++) {
+                        if (used[j]) continue;
+                        const w = ways[j];
+                        if (isClose(tail, w[0])) { ring.push(...w.slice(1)); used[j] = true; extended = true; break; }
+                        else if (isClose(tail, w[w.length - 1])) { ring.push(...[...w].reverse().slice(1)); used[j] = true; extended = true; break; }
+                    }
+                }
+                if (ring.length >= 4) {
+                    if (!isClose(ring[0], ring[ring.length - 1])) ring.push([...ring[0]]);
+                    rings.push(ring);
+                }
+            }
+            return rings;
+        }
+
+        async function fetchRealPolygonFromOverpass(lat, lon) {
+            const overpassQuery = `
+                [out:json][timeout:12];
+                is_in(${lat},${lon})->.a;
+                (
+                  rel(pivot.a)["boundary"="administrative"]["admin_level"~"^(6|7|8|9|10)$"];
+                  rel(pivot.a)["place"~"city|town|village|suburb|hamlet"];
+                  way(pivot.a)["place"~"city|town|village|suburb|hamlet"];
+                  way(around:900,${lat},${lon})["place"~"village|town|city|suburb|hamlet"];
+                  way(around:700,${lat},${lon})["landuse"="residential"];
+                );
+                out geom;
+            `;
+            try {
+                const res = await fetch('https://overpass-api.de/api/interpreter', { method: 'POST', body: overpassQuery });
+                const json = await res.json();
+                if (!json.elements || json.elements.length === 0) return null;
+
+                let candidates = [];
+                for (const el of json.elements) {
+                    if (el.type === 'way' && el.geometry && el.geometry.length >= 4) {
+                        const ring = el.geometry.map(pt => [pt.lon, pt.lat]);
+                        if (ring[0][0] !== ring[ring.length - 1][0] || ring[0][1] !== ring[ring.length - 1][1]) ring.push([...ring[0]]);
+                        const area = calcRingArea(ring);
+                        if (area > 0) candidates.push({ geojson: { type: "Polygon", coordinates: [ring] }, area });
+                    } else if (el.type === 'relation' && el.members) {
+                        const outerWays = el.members.filter(m => m.type === 'way' && m.role === 'outer' && m.geometry && m.geometry.length > 1).map(m => m.geometry.map(pt => [pt.lon, pt.lat]));
+                        if (outerWays.length > 0) {
+                            const polygons = stitchWaysToPolygons(outerWays);
+                            if (polygons.length > 0) {
+                                const totalArea = polygons.reduce((sum, r) => sum + calcRingArea(r), 0);
+                                candidates.push({ geojson: { type: "MultiPolygon", coordinates: polygons.map(r => [r]) }, area: totalArea });
+                            }
+                        }
+                    }
+                }
+                if (candidates.length === 0) return null;
+                candidates.sort((a, b) => a.area - b.area);
+                return candidates[0].geojson;
+            } catch (e) { return null; }
+        }
+
+        function getSingleWordPlaceType(place) {
+            const raw = (place.addresstype || place.type || place.class || "AREA").toUpperCase();
+            if (raw === "ADMINISTRATIVE") {
+                const rank = place.place_rank || 0;
+                if (rank <= 4) return "COUNTRY";
+                if (rank <= 10) return "STATE";
+                if (rank <= 16) return "CITY";
+                return "VILLAGE";
+            }
+            return raw;
+        }
+
+        async function scanLocation() {
+            var query = document.getElementById('searchInput').value.trim();
+            if (!query) return;
+            searchDropdown.close();
+
+            var btn = document.getElementById('scanBtn');
+            var statusBox = document.getElementById('scanStatus');
+            var statusText = document.getElementById('scanStatusText');
+
+            btn.disabled = true; btn.innerText = "Scanning...";
+            statusText.innerText = `SCANNING "${query.toUpperCase()}"... HOLDING POSITION`;
+            statusBox.style.display = 'flex';
+
+            try {
+                var apiUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&polygon_geojson=1&namedetails=1&accept-language=en&limit=10`;
+                var response = await fetch(apiUrl);
+                var data = await response.json();
+
+                if (data.length === 0) {
+                    statusText.innerText = "TARGET NOT FOUND";
+                    setTimeout(() => { statusBox.style.display = 'none'; }, 1800);
+                    return;
+                }
+
+                var place = data.find(item => item.geojson && (item.geojson.type === "Polygon" || item.geojson.type === "MultiPolygon")) || data[0];
+                var lat = parseFloat(place.lat); var lon = parseFloat(place.lon);
+                var geojsonShape = (place.geojson && (place.geojson.type === "Polygon" || place.geojson.type === "MultiPolygon")) ? place.geojson : null;
+                var simplePlaceType = getSingleWordPlaceType(place);
+
+                if (!geojsonShape) {
+                    statusText.innerText = "EXTRACTING BOUNDARY POLYGON...";
+                    geojsonShape = await fetchRealPolygonFromOverpass(lat, lon);
+                }
+
+                var englishName = (place.namedetails && place.namedetails['name:en']) ? place.namedetails['name:en'] : (place.name || place.display_name.split(',')[0]);
+                englishName = englishName.trim().toUpperCase();
+
+                var targetBounds;
+                if (geojsonShape) { targetBounds = L.geoJSON(geojsonShape).getBounds(); }
+                else {
+                    var bbox = place.boundingbox;
+                    targetBounds = L.latLngBounds([parseFloat(bbox[0]), parseFloat(bbox[2])], [parseFloat(bbox[1]), parseFloat(bbox[3])]);
+                }
+
+                statusText.innerText = `LOCKED: ${englishName}`;
+                saveRecentSearch(query);
+
+                if (currentOuterGlow) map.removeLayer(currentOuterGlow);
+                if (currentBoundary) map.removeLayer(currentBoundary);
+                if (currentLabel) map.removeLayer(currentLabel);
+                clearContinents();
+
+                map.flyToBounds(targetBounds, { animate: true, duration: 1.4, padding: [70, 70], maxZoom: 16 });
+
+                setTimeout(() => {
+                    statusBox.style.display = 'none';
+                    
+                    // Show dashboard after location lock
+                    document.getElementById('dashboardMain').style.display = 'block';
+
+                    if (geojsonShape) {
+                        currentOuterGlow = L.geoJSON(geojsonShape, { style: { color: '#00ffcc', weight: 8, opacity: 0.25, fill: false } }).addTo(map);
+                        currentBoundary = L.geoJSON(geojsonShape, { style: { color: '#00ffcc', weight: 3, opacity: 1, fillColor: 'url(#agriGradient)', className: 'boundary-glow' } }).addTo(map);
+                    } else {
+                        currentBoundary = L.polygon([ targetBounds.getSouthWest(), targetBounds.getNorthWest(), targetBounds.getNorthEast(), targetBounds.getSouthEast() ], { color: '#00ffcc', weight: 3, fillColor: 'url(#agriGradient)', className: 'boundary-glow' }).addTo(map);
+                    }
+
+                    var center = targetBounds.getCenter();
+                    lockedLocation = { name: englishName, lat: center.lat.toFixed(4), lon: center.lng.toFixed(4) };
+
+                    var labelIcon = L.divIcon({ className: '', html: `<div class="target-name-label">${englishName}</div>`, iconSize: [220, 40], iconAnchor: [110, 20] });
+                    currentLabel = L.marker(center, { icon: labelIcon, interactive: false }).addTo(map);
+
+                    var hud = document.getElementById('hudInfo');
+                    hud.style.display = 'block';
+                    hud.innerHTML = `TARGET: <span>${englishName}</span> &nbsp;|&nbsp; TYPE: <span>${simplePlaceType}</span> &nbsp;|&nbsp; COORDS: <span>${lockedLocation.lat}, ${lockedLocation.lon}</span>`;
+
+                    document.getElementById('statMoisture').innerText = `Ready (${lockedLocation.lat}°)`;
+                    document.getElementById('statMoistureSub').innerText = `NASA SMAP sector locked for ${englishName}.`;
+                    document.getElementById('statWeather').innerText = `Ready (${lockedLocation.lon}°)`;
+                    document.getElementById('statWeatherSub').innerText = `NASA POWER climate grid aligned to ${englishName}.`;
+                    document.getElementById('statSoil').innerText = `Sector Verified`;
+                    document.getElementById('statSoilSub').innerText = `Ready for lab or SoilGrids integration.`;
+                    updateCropNotice();
+
+                    fetch('/process-location', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lat: center.lat, lon: center.lng, name: englishName }) });
+                }, 1400);
+
+            } finally { btn.disabled = false; btn.innerText = "Scan"; }
+        }
+
+        document.getElementById('chatInput').addEventListener('keypress', function (e) { if (e.key === 'Enter') sendChat(); });
+
+        async function sendChat() {
+            const input = document.getElementById('chatInput');
+            const question = input.value.trim();
+            if (!question) return;
+
+            const chatBox = document.getElementById('chatBox');
+            chatBox.classList.remove('hidden');
+            chatBox.innerHTML += `<div class="msg user">${question}</div>`;
+            input.value = ''; chatBox.scrollTop = chatBox.scrollHeight;
+            const crop = document.getElementById('cropSelect').value;
+
+            try {
+                const res = await fetch('/ask-assistant', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question: question, role: currentRole, location: lockedLocation, crop: crop })
+                });
+                const data = await res.json();
+                chatBox.innerHTML += `<div class="msg bot">${data.reply}</div>`;
+                chatBox.scrollTop = chatBox.scrollHeight;
+            } catch (err) {
+                chatBox.innerHTML += `<div class="msg bot">Connection error with Cyber Galaxy backend.</div>`;
+            }
+        }
+    </script>
+</body>
+</html>
